@@ -32,11 +32,35 @@ app.use(morgan('combined'));
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
 
+// Telegram bot instance.
+const bot = new Telegraf(BOT_TOKEN);
+
 function requireApiKey(req, res, next) {
   if (!API_KEY) return next();
   const got = (req.header('x-api-key') || '').trim();
   if (got && got === API_KEY) return next();
   return res.status(401).json({ error: 'unauthorized' });
+}
+
+// Telegram webhook route (defined BEFORE app.listen).
+//
+// Flow:
+// - Telegram POSTs update JSON to: /telegram/webhook/<BOT_TOKEN>
+// - Express passes JSON body to Telegraf via bot.handleUpdate(...)
+// - We separately call setWebhook(WEBHOOK_URL + telegramPath) on startup.
+const telegramPath = `/telegram/webhook/${BOT_TOKEN}`; // NO "bot" prefix in path.
+if (WEBHOOK_URL) {
+  // WEBHOOK_URL should be only host, no token/path.
+  if (WEBHOOK_URL.includes(BOT_TOKEN) || WEBHOOK_URL.includes('/telegram/webhook/')) {
+    console.warn(
+      'WEBHOOK_URL looks wrong. It should be like https://your-app.onrender.com (no token/path). Got:',
+      WEBHOOK_URL,
+    );
+  }
+  console.log('Webhook endpoint ready:', telegramPath);
+  app.post(telegramPath, express.json(), (req, res) => {
+    bot.handleUpdate(req.body, res);
+  });
 }
 
 function publicBaseUrl(req) {
@@ -175,8 +199,6 @@ app.listen(PORT, () => {
   else console.log('Telegram bot: polling mode');
 });
 
-const bot = new Telegraf(BOT_TOKEN);
-
 bot.start(async (ctx) => {
   const publicUrl = (WEBHOOK_URL || BASE_URL).replace(/\/+$/, '');
   await ctx.reply(
@@ -222,7 +244,6 @@ bot.on(['video', 'document'], async (ctx) => {
   }
 });
 
-// Telegram bot: webhook (recommended on Render) or polling (local dev).
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -235,12 +256,7 @@ async function startTelegramBotWithRetry() {
     attempt += 1;
     try {
       if (WEBHOOK_URL) {
-        const telegramPath = `/telegram/webhook/${BOT_TOKEN}`;
         const webhookUrl = `${WEBHOOK_URL.replace(/\/+$/, '')}${telegramPath}`;
-
-        // Telegram sends POST requests. Use an explicit route so Telegraf can match the path.
-        app.post(telegramPath, express.json(), bot.webhookCallback(telegramPath));
-
         await bot.telegram.setWebhook(webhookUrl);
         console.log(`Telegram bot: webhook set (${webhookUrl})`);
         return;
