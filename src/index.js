@@ -105,6 +105,22 @@ app.get('/api/videos/:id', requireApiKey, (req, res) => {
   }
 });
 
+// Debug: check Telegram webhook status on production.
+// Keep behind API key when enabled.
+app.get('/debug/telegram/webhook', requireApiKey, async (_req, res) => {
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 8000);
+    const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo`, { signal: ctrl.signal });
+    clearTimeout(t);
+    const j = await r.json();
+    res.json(j);
+  } catch (e) {
+    console.error('GET /debug/telegram/webhook failed', e);
+    res.status(500).json({ error: 'internal', message: String(e?.message || e) });
+  }
+});
+
 // Direct streaming from disk with Range support.
 app.get('/stream/:id', requireApiKey, (req, res) => {
   const v = getVideo(req.params.id);
