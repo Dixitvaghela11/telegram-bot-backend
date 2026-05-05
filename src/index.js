@@ -238,8 +238,8 @@ async function startTelegramBotWithRetry() {
         const telegramPath = `/telegram/webhook/${BOT_TOKEN}`;
         const webhookUrl = `${WEBHOOK_URL.replace(/\/+$/, '')}${telegramPath}`;
 
-        // Telegraf provides Express middleware.
-        app.use(telegramPath, express.json(), bot.webhookCallback(telegramPath));
+        // Telegram sends POST requests. Use an explicit route so Telegraf can match the path.
+        app.post(telegramPath, express.json(), bot.webhookCallback(telegramPath));
 
         await bot.telegram.setWebhook(webhookUrl);
         console.log(`Telegram bot: webhook set (${webhookUrl})`);
