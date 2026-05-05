@@ -1,6 +1,18 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+function safeMkdir(dirPath, fallbackRelative) {
+  try {
+    fs.mkdirSync(dirPath, { recursive: true });
+    return dirPath;
+  } catch (e) {
+    // Render without a mounted disk can reject paths like /var/data.
+    const fallback = path.resolve(fallbackRelative);
+    fs.mkdirSync(fallback, { recursive: true });
+    return fallback;
+  }
+}
+
 function dataDir() {
   const d = (process.env.DATA_DIR || '').trim();
   return d ? path.resolve(d) : path.resolve('data');
@@ -11,7 +23,9 @@ function dbPath() {
 }
 
 function ensureDataDir() {
-  fs.mkdirSync(dataDir(), { recursive: true });
+  const chosen = safeMkdir(dataDir(), 'data');
+  // If we had to fallback, point DATA_DIR to the working path for this process.
+  if (chosen !== dataDir()) process.env.DATA_DIR = chosen;
 }
 
 function loadAll() {

@@ -7,13 +7,25 @@ import mime from 'mime-types';
 
 import { upsertVideo } from './store.js';
 
+function safeMkdir(dirPath, fallbackRelative) {
+  try {
+    fs.mkdirSync(dirPath, { recursive: true });
+    return dirPath;
+  } catch (e) {
+    const fallback = path.resolve(fallbackRelative);
+    fs.mkdirSync(fallback, { recursive: true });
+    return fallback;
+  }
+}
+
 function storageDir() {
   const d = (process.env.STORAGE_DIR || '').trim();
   return d ? path.resolve(d) : path.resolve('storage');
 }
 
 function ensureStorage() {
-  fs.mkdirSync(storageDir(), { recursive: true });
+  const chosen = safeMkdir(storageDir(), 'storage');
+  if (chosen !== storageDir()) process.env.STORAGE_DIR = chosen;
 }
 
 export function parseAllowedChatIds(raw) {
@@ -75,6 +87,8 @@ export async function downloadTelegramFile({ botToken, fileId, desiredName }) {
 export async function handleIncomingVideo({ botToken, baseUrl, message }) {
   // message.video or message.document
   const chatId = message.chat.id;
+  const chatTitle = message.chat.title || message.chat.username || null;
+  const chatType = message.chat.type || null;
   const from = message.from?.username || message.from?.first_name || 'unknown';
 
   const video = message.video;
@@ -103,6 +117,8 @@ export async function handleIncomingVideo({ botToken, baseUrl, message }) {
     id,
     source: 'telegram-bot',
     chatId,
+    chatTitle,
+    chatType,
     from,
     telegramFileId: fileId,
     fileName,

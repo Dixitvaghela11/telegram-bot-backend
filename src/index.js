@@ -24,6 +24,8 @@ if (!BOT_TOKEN) {
 }
 
 const app = express();
+// Needed on Render (behind proxy) so req.protocol uses X-Forwarded-Proto.
+app.set('trust proxy', 1);
 app.disable('x-powered-by');
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(morgan('combined'));
@@ -37,6 +39,27 @@ function requireApiKey(req, res, next) {
   return res.status(401).json({ error: 'unauthorized' });
 }
 
+function publicBaseUrl(req) {
+  // Prefer explicit env for stable absolute links.
+  const explicit = (WEBHOOK_URL || BASE_URL || '').trim();
+  if (explicit) return explicit.replace(/\/+$/, '');
+
+  // Otherwise derive from current request.
+  const proto = (req.header('x-forwarded-proto') || req.protocol || 'http').split(',')[0].trim();
+  const host = (req.header('x-forwarded-host') || req.get('host') || '').split(',')[0].trim();
+  if (!host) return '';
+  return `${proto}://${host}`;
+}
+
+function attachStreamUrl(req, obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+  const id = obj.id?.toString?.() ?? '';
+  if (!id) return obj;
+  const base = publicBaseUrl(req);
+  if (!base) return obj;
+  return { ...obj, streamUrl: `${base}/stream/${id}` };
+}
+
 app.get('/health', (_, res) =>
   res.json({
     ok: true,
@@ -46,23 +69,40 @@ app.get('/health', (_, res) =>
 );
 
 app.get('/api/videos', requireApiKey, (_, res) => {
-  const items = listVideos().map((v) => ({
-    id: v.id,
-    fileName: v.fileName,
-    size: v.size,
-    createdAt: v.createdAt,
-    streamUrl: v.streamUrl,
-    contentType: v.contentType,
-    from: v.from,
-    chatId: v.chatId,
-  }));
-  res.json(items);
+  try {
+    const items = listVideos().map((v) =>
+      attachStreamUrl(
+        _,
+        {
+          id: v.id,
+          fileName: v.fileName,
+          size: v.size,
+          createdAt: v.createdAt,
+          streamUrl: v.streamUrl,
+          contentType: v.contentType,
+          from: v.from,
+          chatId: v.chatId,
+          chatTitle: v.chatTitle,
+          chatType: v.chatType,
+        },
+      ),
+    );
+    res.json(items);
+  } catch (e) {
+    console.error('GET /api/videos failed', e);
+    res.status(500).json({ error: 'internal', message: String(e?.message || e) });
+  }
 });
 
 app.get('/api/videos/:id', requireApiKey, (req, res) => {
-  const v = getVideo(req.params.id);
-  if (!v) return res.status(404).json({ error: 'not_found' });
-  res.json(v);
+  try {
+    const v = getVideo(req.params.id);
+    if (!v) return res.status(404).json({ error: 'not_found' });
+    return res.json(attachStreamUrl(req, v));
+  } catch (e) {
+    console.error('GET /api/videos/:id failed', e);
+    return res.status(500).json({ error: 'internal', message: String(e?.message || e) });
+  }
 });
 
 // Direct streaming from disk with Range support.
@@ -122,9 +162,10 @@ app.listen(PORT, () => {
 const bot = new Telegraf(BOT_TOKEN);
 
 bot.start(async (ctx) => {
+  const publicUrl = (WEBHOOK_URL || BASE_URL).replace(/\/+$/, '');
   await ctx.reply(
     'Send or forward a video to me. I will download it and create a streaming link.\n\n' +
-      `Backend: ${BASE_URL}\n` +
+      `Backend: ${publicUrl}\n` +
       'Tip: Set ALLOWED_CHAT_IDS in .env to restrict who can upload.',
   );
 });
@@ -150,9 +191,10 @@ bot.on(['video', 'document'], async (ctx) => {
 
   await ctx.reply('Downloading…');
   try {
+    const publicUrl = (WEBHOOK_URL || BASE_URL).replace(/\/+$/, '');
     const entry = await handleIncomingVideo({
       botToken: BOT_TOKEN,
-      baseUrl: BASE_URL,
+      baseUrl: publicUrl,
       message: msg,
     });
     await ctx.reply(
